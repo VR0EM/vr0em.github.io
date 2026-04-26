@@ -228,7 +228,7 @@ function ContainerView({ container, selected, onMouseDown, onTitleMouseDown, onR
 }
 
 // ---------------- Edge ----------------
-function EdgeView({ edge, fromNode, toNode, flowType, selected, animationsOn, onClick }) {
+function EdgeView({ edge, fromNode, toNode, flowType, selected, animationsOn, onClick, onLabelDragStart }) {
   if (!fromNode || !toNode) return null;
 
   // Per-edge overrides take precedence over flowType defaults
@@ -238,7 +238,8 @@ function EdgeView({ edge, fromNode, toNode, flowType, selected, animationsOn, on
   const animated = (edge.animated ?? flowType?.animated) && animationsOn;
   const direction = edge.direction || "forward";
 
-  const d = buildEdgePath(fromNode, toNode, !!edge.curved);
+  const waypoints = edge.waypoints || [];
+  const d = buildEdgePath(fromNode, toNode, !!edge.curved, waypoints);
 
   // For animation we need a dasharray + animate stroke-dashoffset.
   // Animated dashes look weird if styleKey is "none"/"solid" — force a pattern in that case.
@@ -248,7 +249,11 @@ function EdgeView({ edge, fromNode, toNode, flowType, selected, animationsOn, on
   const markerEnd = direction !== "bidirectional" ? `url(#arrow-${edge.id})` : `url(#arrow-${edge.id})`;
   const markerStart = direction === "bidirectional" ? `url(#arrow-start-${edge.id})` : undefined;
 
-  const mid = pathMidpoint(fromNode, toNode, !!edge.curved);
+  const mid = pathMidpoint(fromNode, toNode, !!edge.curved, waypoints);
+  const labelOffset = edge.labelOffset || { x: 0, y: 0 };
+  const labelX = mid.x + labelOffset.x;
+  const labelY = mid.y + labelOffset.y;
+  const hasLabelOffset = Math.abs(labelOffset.x) > 6 || Math.abs(labelOffset.y) > 6;
 
   return (
     <g onClick={(e) => { e.stopPropagation(); onClick(); }} style={{ cursor: "pointer" }}>
@@ -311,26 +316,39 @@ function EdgeView({ edge, fromNode, toNode, flowType, selected, animationsOn, on
       )}
       {/* Label */}
       {edge.label && (
-        <g transform={`translate(${mid.x}, ${mid.y})`}>
-          <rect
-            x={-(edge.label.length * 3.4 + 8)}
-            y="-9"
-            width={edge.label.length * 6.8 + 16}
-            height="18"
-            rx="9"
-            fill="#ffffff"
-            stroke={hexToRgba(color, 0.4)}
-            strokeWidth="1"
-          />
-          <text
-            textAnchor="middle"
-            y="4"
-            fontSize="10.5"
-            fill={TW.slate700}
-            style={{ fontFamily: "Inter, sans-serif", pointerEvents: "none" }}
+        <g>
+          {hasLabelOffset && (
+            <line
+              x1={mid.x} y1={mid.y} x2={labelX} y2={labelY}
+              stroke={color} strokeWidth="1" strokeDasharray="3 3" strokeOpacity="0.4"
+              style={{ pointerEvents: "none" }}
+            />
+          )}
+          <g
+            transform={`translate(${labelX}, ${labelY})`}
+            onMouseDown={onLabelDragStart ? (e) => { e.stopPropagation(); onLabelDragStart(e, { ...labelOffset }); } : undefined}
+            style={{ cursor: onLabelDragStart ? "move" : undefined }}
           >
-            {edge.label}
-          </text>
+            <rect
+              x={-(edge.label.length * 3.4 + 8)}
+              y="-9"
+              width={edge.label.length * 6.8 + 16}
+              height="18"
+              rx="9"
+              fill="#ffffff"
+              stroke={hexToRgba(color, 0.4)}
+              strokeWidth="1"
+            />
+            <text
+              textAnchor="middle"
+              y="4"
+              fontSize="10.5"
+              fill={TW.slate700}
+              style={{ fontFamily: "Inter, sans-serif", pointerEvents: "none", userSelect: "none" }}
+            >
+              {edge.label}
+            </text>
+          </g>
         </g>
       )}
     </g>
@@ -434,6 +452,21 @@ function Canvas({ state, dispatch, onAddNodeAt, onAddContainerAt, canvasRef }) {
         dispatch({ type: "RESIZE_CONTAINER", id: drag.id, rect: { w: newW, h: newH } });
         drag.applied.w = newW; drag.applied.h = newH;
       }
+    } else if (drag.kind === "waypoint") {
+      const newX = snap(pt.x);
+      const newY = snap(pt.y);
+      if (newX !== drag.applied.x || newY !== drag.applied.y) {
+        const wps = drag.initialWaypoints.map((wp, i) =>
+          i === drag.waypointIndex ? { x: newX, y: newY } : wp
+        );
+        dispatch({ type: "DRAG_WAYPOINT", edgeId: drag.edgeId, waypoints: wps });
+        drag.applied.x = newX;
+        drag.applied.y = newY;
+      }
+    } else if (drag.kind === "edgeLabel") {
+      const newOx = drag.startOffset.x + (pt.x - drag.startDoc.x);
+      const newOy = drag.startOffset.y + (pt.y - drag.startDoc.y);
+      dispatch({ type: "DRAG_EDGE_LABEL", id: drag.edgeId, labelOffset: { x: newOx, y: newOy } });
     }
   };
 
@@ -527,6 +560,84 @@ function Canvas({ state, dispatch, onAddNodeAt, onAddContainerAt, canvasRef }) {
     return m;
   }, [doc.nodes]);
 
+  const handleWaypointMouseDown = (e, edgeId, waypointIndex, wp) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const edge = doc.edges.find(ed => ed.id === edgeId);
+    if (!edge) return;
+    dispatch({ type: "BEGIN_DRAG" });
+    const startDoc = screenToDoc(svgRef.current, e.clientX, e.clientY, doc.viewport);
+    setDrag({ kind: "waypoint", edgeId, waypointIndex, startDoc, initialWaypoints: [...(edge.waypoints || [])], applied: { x: wp.x, y: wp.y } });
+  };
+
+  const handleMidpointMouseDown = (e, edgeId, insertIdx, midPt) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const edge = doc.edges.find(ed => ed.id === edgeId);
+    if (!edge) return;
+    const newWp = { x: snap(midPt.x), y: snap(midPt.y) };
+    const newWps = [...(edge.waypoints || [])];
+    newWps.splice(insertIdx, 0, newWp);
+    dispatch({ type: "UPDATE_EDGE", id: edgeId, patch: { waypoints: newWps } });
+    const startDoc = screenToDoc(svgRef.current, e.clientX, e.clientY, doc.viewport);
+    setDrag({ kind: "waypoint", edgeId, waypointIndex: insertIdx, startDoc, initialWaypoints: newWps, applied: { x: newWp.x, y: newWp.y } });
+  };
+
+  const handleDeleteWaypoint = (edgeId, waypointIndex) => {
+    const edge = doc.edges.find(ed => ed.id === edgeId);
+    if (!edge) return;
+    const newWps = (edge.waypoints || []).filter((_, i) => i !== waypointIndex);
+    dispatch({ type: "UPDATE_EDGE", id: edgeId, patch: { waypoints: newWps } });
+  };
+
+  const handleLabelDragStart = (e, edgeId, currentOffset) => {
+    if (e.button !== 0) return;
+    dispatch({ type: "BEGIN_DRAG" });
+    const startDoc = screenToDoc(svgRef.current, e.clientX, e.clientY, doc.viewport);
+    setDrag({ kind: "edgeLabel", edgeId, startDoc, startOffset: { ...currentOffset } });
+  };
+
+  const renderWaypointHandles = () => {
+    if (selection?.kind !== "edge") return null;
+    const edge = doc.edges.find(e => e.id === selection.id);
+    if (!edge) return null;
+    const fromNode = nodeMap[edge.from];
+    const toNode = nodeMap[edge.to];
+    if (!fromNode || !toNode) return null;
+    const wps = edge.waypoints || [];
+    const { a, b } = getEdgeAnchors(fromNode, toNode, wps);
+    const pts = [{ x: a.x, y: a.y }, ...wps, { x: b.x, y: b.y }];
+    const color = edge.color || doc.flowTypes[edge.flowType]?.color || TW.slate600;
+    return (
+      <g>
+        {pts.slice(0, -1).map((p, i) => {
+          const q = pts[i + 1];
+          const mx = (p.x + q.x) / 2;
+          const my = (p.y + q.y) / 2;
+          return (
+            <circle
+              key={`mid-${i}`}
+              cx={mx} cy={my} r="4"
+              fill={color} fillOpacity="0.35" stroke={color} strokeWidth="1" strokeOpacity="0.7"
+              style={{ cursor: "crosshair" }}
+              onMouseDown={(e) => handleMidpointMouseDown(e, edge.id, i + 1, { x: mx, y: my })}
+            />
+          );
+        })}
+        {wps.map((wp, i) => (
+          <circle
+            key={`wp-${i}`}
+            cx={wp.x} cy={wp.y} r="5"
+            fill="white" stroke={color} strokeWidth="2"
+            style={{ cursor: "move" }}
+            onMouseDown={(e) => handleWaypointMouseDown(e, edge.id, i, wp)}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteWaypoint(edge.id, i); }}
+          />
+        ))}
+      </g>
+    );
+  };
+
   // Cursor
   const canvasCursor = panRef.current.panning ? "grabbing"
     : spaceDown ? "grab"
@@ -599,6 +710,7 @@ function Canvas({ state, dispatch, onAddNodeAt, onAddContainerAt, canvasRef }) {
               selected={selection?.kind === "edge" && selection.id === edge.id}
               animationsOn={globalAnimations}
               onClick={() => dispatch({ type: "SET_SELECTION", selection: { kind: "edge", id: edge.id } })}
+              onLabelDragStart={(e, currentOffset) => handleLabelDragStart(e, edge.id, currentOffset)}
             />
           );
         })}
@@ -615,6 +727,8 @@ function Canvas({ state, dispatch, onAddNodeAt, onAddContainerAt, canvasRef }) {
             onMeasure={(id, w, h) => dispatch({ type: "MEASURE_NODE", id, w, h })}
           />
         ))}
+        {/* Waypoint handles for selected edge — above all other content */}
+        {renderWaypointHandles()}
       </g>
     </svg>
   );

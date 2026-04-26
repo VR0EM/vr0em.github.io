@@ -152,6 +152,18 @@ function reducer(state, action) {
       };
       return { ...state, doc: next };
     }
+    case "DRAG_WAYPOINT": {
+      const next = { ...state.doc, edges: state.doc.edges.map(e =>
+        e.id === action.edgeId ? { ...e, waypoints: action.waypoints } : e
+      ) };
+      return { ...state, doc: next };
+    }
+    case "DRAG_EDGE_LABEL": {
+      const next = { ...state.doc, edges: state.doc.edges.map(e =>
+        e.id === action.id ? { ...e, labelOffset: action.labelOffset } : e
+      ) };
+      return { ...state, doc: next };
+    }
     case "UNDO": {
       if (state.past.length === 0) return state;
       const previous = state.past[state.past.length - 1];

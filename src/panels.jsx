@@ -144,8 +144,8 @@ function PanelInner({ state, dispatch }) {
           <div className="grid grid-cols-2 gap-2">
             <Field label="X"><input type="number" value={Number.isFinite(node.x) ? node.x : 0} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { x: toInt(e.target.value, node.x) } })} className={monoInputCls} /></Field>
             <Field label="Y"><input type="number" value={Number.isFinite(node.y) ? node.y : 0} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { y: toInt(e.target.value, node.y) } })} className={monoInputCls} /></Field>
-            <Field label="Width"><input type="number" value={Number.isFinite(node.w) ? node.w : 240} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { w: Math.max(96, toInt(e.target.value, node.w)) } })} className={monoInputCls} /></Field>
-            <Field label="Height"><input type="number" value={Number.isFinite(node.h) ? node.h : 76} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { h: Math.max(48, toInt(e.target.value, node.h)), userHeight: true } })} className={monoInputCls} /></Field>
+            <Field label="Width"><input type="number" value={Number.isFinite(node.w) ? node.w : 240} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { w: toInt(e.target.value, node.w) } })} onBlur={e => { const v = Math.max(20, toInt(e.target.value, 20)); if (v !== node.w) dispatch({ type: "UPDATE_NODE", id: node.id, patch: { w: v } }); }} className={monoInputCls} /></Field>
+            <Field label="Height"><input type="number" value={Number.isFinite(node.h) ? node.h : 76} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { h: toInt(e.target.value, node.h), userHeight: true } })} onBlur={e => { const v = Math.max(20, toInt(e.target.value, 20)); if (v !== node.h) dispatch({ type: "UPDATE_NODE", id: node.id, patch: { h: v, userHeight: true } }); }} className={monoInputCls} /></Field>
           </div>
           {container && (
             <div className="text-[11px] text-slate-500">
@@ -246,6 +246,12 @@ function PanelInner({ state, dispatch }) {
               >Curved</button>
             </div>
           </Field>
+          {e.waypoints && e.waypoints.length > 0 && (
+            <button
+              onClick={() => dispatch({ type: "UPDATE_EDGE", id: e.id, patch: { waypoints: [], labelOffset: { x: 0, y: 0 } } })}
+              className="w-full px-3 py-1.5 text-[11px] font-medium text-red-600 hover:bg-red-50 rounded-md border border-red-100 transition-all duration-150"
+            >Clear waypoints ({e.waypoints.length})</button>
+          )}
         </Section>
         <Section title="Style">
           <Field label="Line">
