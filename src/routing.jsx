@@ -73,22 +73,52 @@ function bezierPath(a, b) {
   return `M ${a.x} ${a.y} C ${a.x + c1x} ${a.y + c1y}, ${b.x + c2x} ${b.y + c2y}, ${b.x} ${b.y}`;
 }
 
-function buildEdgePath(fromNode, toNode, curved) {
-  const aTarget = { x: toNode.x + toNode.w / 2,   y: toNode.y + toNode.h / 2 };
-  const bTarget = { x: fromNode.x + fromNode.w/2, y: fromNode.y + fromNode.h/2 };
-  const a = anchorPoint(fromNode, aTarget.x, aTarget.y);
-  const b = anchorPoint(toNode,   bTarget.x, bTarget.y);
-  return curved ? bezierPath(a, b) : orthogonalPath(a, b);
+// Compute anchor points from both ends, pointing toward the first/last waypoint
+// (or toward each other if no waypoints). Used by buildEdgePath and EdgeView.
+function getEdgeAnchors(fromNode, toNode, waypoints) {
+  const wps = waypoints || [];
+  const aTarget = wps.length > 0 ? wps[0] : { x: toNode.x + toNode.w / 2, y: toNode.y + toNode.h / 2 };
+  const bTarget = wps.length > 0 ? wps[wps.length - 1] : { x: fromNode.x + fromNode.w / 2, y: fromNode.y + fromNode.h / 2 };
+  return {
+    a: anchorPoint(fromNode, aTarget.x, aTarget.y),
+    b: anchorPoint(toNode, bTarget.x, bTarget.y),
+  };
 }
 
-// Compute approximate midpoint for placing a label on a path.
-// For ortho paths we use the geometric centroid of the points; for bezier we use the visual midpoint.
-function pathMidpoint(fromNode, toNode, curved) {
-  const a = anchorPoint(fromNode, toNode.x + toNode.w/2, toNode.y + toNode.h/2);
-  const b = anchorPoint(toNode, fromNode.x + fromNode.w/2, fromNode.y + fromNode.h/2);
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+function buildEdgePath(fromNode, toNode, curved, waypoints) {
+  const wps = waypoints || [];
+  const { a, b } = getEdgeAnchors(fromNode, toNode, wps);
+  if (wps.length === 0) {
+    return curved ? bezierPath(a, b) : orthogonalPath(a, b);
+  }
+  // Multi-segment path through user waypoints.
+  // Ortho: polyline through each point (user places corners deliberately).
+  // Curved: cubic bezier through each segment.
+  const pts = [{ x: a.x, y: a.y }, ...wps, { x: b.x, y: b.y }];
+  if (curved) {
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i - 1], q = pts[i];
+      const pull = Math.max(40, Math.hypot(q.x - p.x, q.y - p.y) * 0.35);
+      const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+      const ux = (q.x - p.x) / len, uy = (q.y - p.y) / len;
+      d += ` C ${p.x + ux * pull} ${p.y + uy * pull}, ${q.x - ux * pull} ${q.y - uy * pull}, ${q.x} ${q.y}`;
+    }
+    return d;
+  }
+  return pts.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(" ");
+}
+
+// Midpoint for label placement. With waypoints, uses the middle segment's midpoint.
+function pathMidpoint(fromNode, toNode, curved, waypoints) {
+  const wps = waypoints || [];
+  const { a, b } = getEdgeAnchors(fromNode, toNode, wps);
+  const pts = [{ x: a.x, y: a.y }, ...wps, { x: b.x, y: b.y }];
+  const mid = Math.floor((pts.length - 1) / 2);
+  return { x: (pts[mid].x + pts[mid + 1].x) / 2, y: (pts[mid].y + pts[mid + 1].y) / 2 };
 }
 
 window.anchorPoint = anchorPoint;
+window.getEdgeAnchors = getEdgeAnchors;
 window.buildEdgePath = buildEdgePath;
 window.pathMidpoint = pathMidpoint;

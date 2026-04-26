@@ -29,25 +29,22 @@ function NodeView({ node, type, selected, onMouseDown, onClick, onMeasure }) {
 
   React.useEffect(() => {
     const el = cardRef.current;
-    if (!el || !onMeasure) return;
+    // Skip auto-measurement when user has explicitly set a height.
+    if (!el || !onMeasure || node.userHeight) return;
     const measure = () => {
-      const r = el.getBoundingClientRect();
-      // Convert from screen px back to doc px (the foreignObject is inside the zoomed <g>,
-      // so getBoundingClientRect returns scaled px). We measure the *unscaled* size by
-      // reading offsetWidth/Height instead.
-      const w = Math.max(200, Math.min(360, Math.ceil(el.offsetWidth)));
       const h = Math.ceil(el.offsetHeight);
-      if (w !== node.w || h !== node.h) onMeasure(node.id, w, h);
+      // Width is always fixed at node.w — only report height changes.
+      if (h !== node.h) onMeasure(node.id, node.w, h);
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [node.id, node.label, node.subtitle, node.ip, node.w, node.h, onMeasure]);
+  }, [node.id, node.label, node.subtitle, node.ip, node.w, node.h, node.userHeight, onMeasure]);
 
-  // Use a generous foreignObject canvas so wrapping text isn't pre-clipped before measurement.
-  const FO_W = 360;
-  const FO_H = Math.max(200, node.h + 80);
+  // FO is just wide enough to hold the card — no large transparent hit area.
+  const FO_W = node.w + 4;
+  const FO_H = node.userHeight ? node.h + 4 : Math.max(200, node.h + 80);
 
   return (
     <g
@@ -56,12 +53,12 @@ function NodeView({ node, type, selected, onMouseDown, onClick, onMeasure }) {
       onClick={onClick}
       style={{ cursor: "grab" }}
     >
-      {/* Drop shadow */}
+      {/* Drop shadow — also acts as the SVG hit area for this node */}
       <rect
         x="0" y="2" width={node.w} height={node.h} rx="10"
         fill="rgba(15,23,42,0.08)"
       />
-      {/* Selection ring (drawn behind body so it shows around the card) */}
+      {/* Selection ring */}
       {selected && (
         <rect
           x="-4" y="-4" width={node.w + 8} height={node.h + 8} rx="13"
@@ -69,23 +66,27 @@ function NodeView({ node, type, selected, onMouseDown, onClick, onMeasure }) {
           style={{ pointerEvents: "none" }}
         />
       )}
-      <foreignObject x="0" y="0" width={FO_W} height={FO_H}>
-        <div xmlns="http://www.w3.org/1999/xhtml" style={{ width: FO_W, pointerEvents: "none" }}>
+      {/* pointerEvents:none on the FO prevents it acting as a large invisible SVG hit
+          area; HTML content inside (card div with pointerEvents:auto) still fires events
+          that bubble through the fiber tree to this <g>'s handlers. */}
+      <foreignObject x="0" y="0" width={FO_W} height={FO_H} style={{ pointerEvents: "none" }}>
+        <div xmlns="http://www.w3.org/1999/xhtml" style={{ width: node.w, pointerEvents: "none" }}>
           <div
             ref={cardRef}
             className="flex rounded-lg overflow-hidden bg-white select-none"
             style={{
-              width: "fit-content",
-              minWidth: 200,
-              maxWidth: 360,
+              width: node.w,
+              height: node.userHeight ? node.h : undefined,
+              overflow: node.userHeight ? "hidden" : undefined,
               border: `${selected ? 2 : 1}px solid ${selected ? accent : TW.slate200}`,
               fontFamily: "Inter, sans-serif",
               pointerEvents: "auto",
+              cursor: "grab",
             }}
           >
-            {/* Accent bar — flush with left edge, full saturation, clipped by parent's overflow-hidden */}
+            {/* Accent bar */}
             <div style={{ width: 6, background: accent, flexShrink: 0 }} />
-            <div className="flex-1 p-3 flex gap-2.5 items-start">
+            <div className="flex-1 p-3 flex gap-2.5 items-start min-w-0">
               {/* Icon */}
               <div
                 className="rounded-md flex items-center justify-center flex-shrink-0 mt-0.5"
@@ -97,16 +98,22 @@ function NodeView({ node, type, selected, onMouseDown, onClick, onMeasure }) {
               </div>
               {/* Text stack */}
               <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-semibold text-slate-900 leading-snug whitespace-normal break-words">
+                <div className="text-[13px] font-semibold text-slate-900 leading-snug truncate">
                   {node.label || ""}
                 </div>
                 {node.subtitle && (
-                  <div className="text-[11px] text-slate-500 leading-snug whitespace-normal break-words mt-0.5">
+                  <div
+                    className="text-[11px] text-slate-500 leading-snug mt-0.5"
+                    style={node.userHeight
+                      ? { overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }
+                      : { whiteSpace: "normal", wordBreak: "break-word" }
+                    }
+                  >
                     {node.subtitle}
                   </div>
                 )}
                 {node.ip && (
-                  <div className="text-[10.5px] text-slate-400 mono leading-snug whitespace-normal break-all mt-1">
+                  <div className="text-[10.5px] text-slate-400 mono leading-snug mt-1 truncate">
                     {node.ip}
                   </div>
                 )}
@@ -162,14 +169,25 @@ const ICON_INNER = {
 };
 
 // ---------------- Container ----------------
-function ContainerView({ container, selected, onMouseDown, onTitleMouseDown, onResizeStart, onClick }) {
+function ContainerView({ container, selected, onMouseDown, onTitleMouseDown, onResizeStart, onClick, addMode }) {
   const tint = CONTAINER_TINTS.find(t => t.id === container.tint) || CONTAINER_TINTS[0];
   const titleH = 28;
+  // Unique clip path ID so the title bar gets a flat bottom edge (no double-rounded seam).
+  const clipId = `cclip-${container.id}`;
+  // In addNode/addContainer mode, make the container transparent to pointer events so
+  // clicks fall through to the canvas background (which handles placement).
+  const noHit = addMode ? { pointerEvents: "none" } : null;
   return (
     <g
       transform={`translate(${container.x}, ${container.y})`}
-      onClick={onClick}
+      onClick={addMode ? undefined : onClick}
     >
+      <defs>
+        {/* Clip the title bar to exactly titleH so its rounded bottom corners don't show. */}
+        <clipPath id={clipId}>
+          <rect x="0" y="0" width={container.w} height={titleH} />
+        </clipPath>
+      </defs>
       {/* Body — translucent fill, dashed border */}
       <rect
         x="0" y="0" width={container.w} height={container.h} rx="12"
@@ -177,28 +195,23 @@ function ContainerView({ container, selected, onMouseDown, onTitleMouseDown, onR
         stroke={selected ? tint.color : hexToRgba(tint.color, 0.5)}
         strokeWidth={selected ? 2 : 1.25}
         strokeDasharray={selected ? "0" : "6 4"}
-        onMouseDown={onMouseDown}
-        style={{ cursor: "grab" }}
+        onMouseDown={addMode ? undefined : onMouseDown}
+        style={noHit || { cursor: "grab" }}
       />
-      {/* Title bar */}
+      {/* Title bar — extends below titleH so its own rounded bottom corners fall outside
+          the clip; the clip gives a clean flat bottom. Full opacity avoids dashed-border bleed. */}
       <rect
-        x="0" y="0" width={container.w} height={titleH} rx="12"
-        fill={hexToRgba(tint.color, 0.92)}
-        onMouseDown={onTitleMouseDown}
-        style={{ cursor: "grab" }}
+        x="0" y="0" width={container.w} height={titleH + 14} rx="12"
+        fill={tint.color}
+        clipPath={`url(#${clipId})`}
+        onMouseDown={addMode ? undefined : onTitleMouseDown}
+        style={noHit || { cursor: "grab" }}
       />
-      {/* Square off the bottom of the title bar so corners blend with the body */}
-      <rect
-        x="0" y={titleH - 8} width={container.w} height="8"
-        fill={hexToRgba(tint.color, 0.92)}
-        onMouseDown={onTitleMouseDown}
-        style={{ cursor: "grab" }}
-      />
-      <text x="14" y={titleH/2 + 4.5} fontSize="12" fontWeight="600" fill="#ffffff" style={{ fontFamily: "Inter, sans-serif", pointerEvents: "none" }}>
+      <text x="14" y={titleH / 2 + 4.5} fontSize="12" fontWeight="600" fill="#ffffff" style={{ fontFamily: "Inter, sans-serif", pointerEvents: "none" }}>
         {container.label}
       </text>
       {/* Resize handle (bottom-right) */}
-      <g transform={`translate(${container.w - 14}, ${container.h - 14})`} onMouseDown={onResizeStart} style={{ cursor: "nwse-resize" }}>
+      <g transform={`translate(${container.w - 14}, ${container.h - 14})`} onMouseDown={addMode ? undefined : onResizeStart} style={noHit || { cursor: "nwse-resize" }}>
         <rect x="-4" y="-4" width="14" height="14" fill="transparent" />
         <path d="M0 8 L8 0 M3 8 L8 3 M6 8 L8 6" stroke={hexToRgba(tint.color, 0.7)} strokeWidth="1.5" strokeLinecap="round" />
       </g>
@@ -564,6 +577,7 @@ function Canvas({ state, dispatch, onAddNodeAt, onAddContainerAt, canvasRef }) {
             onTitleMouseDown={(e) => handleContainerMouseDown(e, c)}
             onResizeStart={(e) => handleResizeStart(e, c)}
             onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_SELECTION", selection: { kind: "container", id: c.id } }); }}
+            addMode={mode === "addNode" || mode === "addContainer"}
           />
         ))}
 

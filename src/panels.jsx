@@ -144,8 +144,8 @@ function PanelInner({ state, dispatch }) {
           <div className="grid grid-cols-2 gap-2">
             <Field label="X"><input type="number" value={Number.isFinite(node.x) ? node.x : 0} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { x: toInt(e.target.value, node.x) } })} className={monoInputCls} /></Field>
             <Field label="Y"><input type="number" value={Number.isFinite(node.y) ? node.y : 0} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { y: toInt(e.target.value, node.y) } })} className={monoInputCls} /></Field>
-            <Field label="Width"><input type="number" value={Number.isFinite(node.w) ? node.w : 160} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { w: Math.max(96, toInt(e.target.value, node.w)) } })} className={monoInputCls} /></Field>
-            <Field label="Height"><input type="number" value={Number.isFinite(node.h) ? node.h : 76} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { h: Math.max(48, toInt(e.target.value, node.h)) } })} className={monoInputCls} /></Field>
+            <Field label="Width"><input type="number" value={Number.isFinite(node.w) ? node.w : 240} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { w: Math.max(96, toInt(e.target.value, node.w)) } })} className={monoInputCls} /></Field>
+            <Field label="Height"><input type="number" value={Number.isFinite(node.h) ? node.h : 76} onChange={e => dispatch({ type: "UPDATE_NODE", id: node.id, patch: { h: Math.max(48, toInt(e.target.value, node.h)), userHeight: true } })} className={monoInputCls} /></Field>
           </div>
           {container && (
             <div className="text-[11px] text-slate-500">

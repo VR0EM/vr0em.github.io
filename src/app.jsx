@@ -157,6 +157,7 @@ function Toast({ message, kind, onClose }) {
 function App() {
   const [state, dispatch] = useReducer(diagramReducer, diagramInitialState);
   const [showTypes, setShowTypes] = useStateA(false);
+  const [panelCollapsed, setPanelCollapsed] = useStateA(false);
   const [toast, setToast] = useStateA(null);
   const canvasSvgRef = useRefA(null);
   const containerRef = useRefA(null);
@@ -208,7 +209,7 @@ function App() {
     const node = {
       id: makeId("n"),
       type: state.newNodeType || "generic",
-      x, y, w: 160, h: 76,
+      x, y, w: 240, h: 76,
       label: "New node",
       subtitle: "",
       ip: "",
@@ -370,8 +371,19 @@ function App() {
           {/* Floating legend, bottom-left */}
           <Legend doc={state.doc} />
         </div>
-        <aside className="w-80 border-l border-slate-200 bg-white overflow-y-auto thin-scroll flex-shrink-0">
-          <Properties state={state} dispatch={dispatch} />
+        <aside className={"flex-shrink-0 border-l border-slate-200 bg-white relative " + (panelCollapsed ? "w-8" : "w-80")}>
+          <button
+            onClick={() => setPanelCollapsed(v => !v)}
+            className="absolute top-3 -left-3.5 z-10 w-7 h-7 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-400 hover:text-slate-700 hover:border-slate-400 transition-all duration-150"
+            title={panelCollapsed ? "Expand panel" : "Collapse panel"}
+          >
+            <Glyph d={panelCollapsed ? G.chevronLeft : G.chevronRight} className="w-3.5 h-3.5" />
+          </button>
+          {!panelCollapsed && (
+            <div className="overflow-y-auto thin-scroll h-full">
+              <Properties state={state} dispatch={dispatch} />
+            </div>
+          )}
         </aside>
       </div>
       {showTypes && <TypeManager doc={state.doc} dispatch={dispatch} onClose={() => setShowTypes(false)} />}
